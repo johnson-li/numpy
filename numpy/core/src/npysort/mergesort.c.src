@@ -37,7 +37,75 @@
 #define SMALL_QUICKSORT 15
 #define SMALL_MERGESORT 20
 #define SMALL_STRING 16
+#define RADIX_BASE 4
 
+
+/*
+ *****************************************************************************
+ **                            DIGITAL SORTS                                **
+ *****************************************************************************
+ */
+
+
+ /**begin repeat
+ *
+ * #TYPE = BOOL, BYTE, UBYTE, SHORT, USHORT, INT, UINT, LONG, ULONG,
+ *         LONGLONG, ULONGLONG, HALF#
+ * #suff = bool, byte, ubyte, short, ushort, int, uint, long, ulong,
+ *         longlong, ulonglong, half#
+ * #type = npy_bool, npy_byte, npy_ubyte, npy_short, npy_ushort, npy_int,
+ *         npy_uint, npy_long, npy_ulong, npy_longlong, npy_ulonglong,
+ *         npy_ushort#
+ */
+
+int
+count_sort_@suff@(@type@ *start, npy_intp num, npy_intp exp, @type@ *pw, int *count) {
+    int i, j;
+    for (i = 0; i < RADIX_BASE + 1; i++) {
+        count[i] = 0;
+    }
+    for (i = 0; i < num; i++) {
+        count[(start[i] / exp) % RADIX_BASE + 1]++;
+    }
+    for (j = 1; j < RADIX_BASE + 1; j++) {
+         count[j] += count[j - 1];
+    }
+    for (i = 0; i < num; i++) {
+        int bin = (start[i] / exp) % RADIX_BASE;
+        pw[count[bin]++] = start[i];
+    }
+    for (i = 0; i < num; i++) {
+        start[i] = pw[i];
+    }
+}
+
+int
+mergesort_@suff@(void *start, npy_intp num, void *NOT_USED)
+{
+    @type@ *type_start = start;
+    @type@ max = 0;
+    int i, exp;
+    int *count = malloc(RADIX_BASE * sizeof(int));
+    @type@ *pw = malloc(num * sizeof(@type@));
+    for (i = 0; i < num; i++) {
+        if (type_start[i] > max) {
+            max = type_start[i];
+        }
+    }
+    for (exp = 1; num / exp > 0; exp *= RADIX_BASE) {
+        count_sort_@suff@(type_start, num, exp, pw, count);
+    }
+    return 0;
+}
+
+
+int
+amergesort_@suff@(void *v, npy_intp *tosort, npy_intp num, void *NOT_USED)
+{
+    return 0;
+}
+
+/**end repeat**/
 
 /*
  *****************************************************************************
@@ -48,15 +116,11 @@
 
 /**begin repeat
  *
- * #TYPE = BOOL, BYTE, UBYTE, SHORT, USHORT, INT, UINT, LONG, ULONG,
- *         LONGLONG, ULONGLONG, HALF, FLOAT, DOUBLE, LONGDOUBLE,
+ * #TYPE = FLOAT, DOUBLE, LONGDOUBLE,
  *         CFLOAT, CDOUBLE, CLONGDOUBLE, DATETIME, TIMEDELTA#
- * #suff = bool, byte, ubyte, short, ushort, int, uint, long, ulong,
- *         longlong, ulonglong, half, float, double, longdouble,
+ * #suff = float, double, longdouble,
  *         cfloat, cdouble, clongdouble, datetime, timedelta#
- * #type = npy_bool, npy_byte, npy_ubyte, npy_short, npy_ushort, npy_int,
- *         npy_uint, npy_long, npy_ulong, npy_longlong, npy_ulonglong,
- *         npy_ushort, npy_float, npy_double, npy_longdouble, npy_cfloat,
+ * #type = npy_float, npy_double, npy_longdouble, npy_cfloat,
  *         npy_cdouble, npy_clongdouble, npy_datetime, npy_timedelta#
  */
 
@@ -106,17 +170,6 @@ mergesort0_@suff@(@type@ *pl, @type@ *pr, @type@ *pw)
 int
 mergesort_@suff@(void *start, npy_intp num, void *NOT_USED)
 {
-    @type@ *pl, *pr, *pw;
-
-    pl = start;
-    pr = pl + num;
-    pw = malloc((num/2) * sizeof(@type@));
-    if (pw == NULL) {
-        return -NPY_ENOMEM;
-    }
-    mergesort0_@suff@(pl, pr, pw);
-
-    free(pw);
     return 0;
 }
 
@@ -169,17 +222,6 @@ amergesort0_@suff@(npy_intp *pl, npy_intp *pr, @type@ *v, npy_intp *pw)
 int
 amergesort_@suff@(void *v, npy_intp *tosort, npy_intp num, void *NOT_USED)
 {
-    npy_intp *pl, *pr, *pw;
-
-    pl = tosort;
-    pr = pl + num;
-    pw = malloc((num/2) * sizeof(npy_intp));
-    if (pw == NULL) {
-        return -NPY_ENOMEM;
-    }
-    amergesort0_@suff@(pl, pr, v, pw);
-    free(pw);
-
     return 0;
 }
 
@@ -248,36 +290,7 @@ mergesort0_@suff@(@type@ *pl, @type@ *pr, @type@ *pw, @type@ *vp, size_t len)
 int
 mergesort_@suff@(void *start, npy_intp num, void *varr)
 {
-    PyArrayObject *arr = varr;
-    size_t elsize = PyArray_ITEMSIZE(arr);
-    size_t len = elsize / sizeof(@type@);
-    @type@ *pl, *pr, *pw, *vp;
-    int err = 0;
-
-    /* Items that have zero size don't make sense to sort */
-    if (elsize == 0) {
-        return 0;
-    }
-
-    pl = start;
-    pr = pl + num*len;
-    pw = malloc((num/2) * elsize);
-    if (pw == NULL) {
-        err = -NPY_ENOMEM;
-        goto fail_0;
-    }
-    vp = malloc(elsize);
-    if (vp == NULL) {
-        err = -NPY_ENOMEM;
-        goto fail_1;
-    }
-    mergesort0_@suff@(pl, pr, pw, vp, len);
-
-    free(vp);
-fail_1:
-    free(pw);
-fail_0:
-    return err;
+    return 0;
 }
 
 
@@ -329,25 +342,6 @@ amergesort0_@suff@(npy_intp *pl, npy_intp *pr, @type@ *v, npy_intp *pw, size_t l
 int
 amergesort_@suff@(void *v, npy_intp *tosort, npy_intp num, void *varr)
 {
-    PyArrayObject *arr = varr;
-    size_t elsize = PyArray_ITEMSIZE(arr);
-    size_t len = elsize / sizeof(@type@);
-    npy_intp *pl, *pr, *pw;
-
-    /* Items that have zero size don't make sense to sort */
-    if (elsize == 0) {
-        return 0;
-    }
-
-    pl = tosort;
-    pr = pl + num;
-    pw = malloc((num/2) * sizeof(npy_intp));
-    if (pw == NULL) {
-        return -NPY_ENOMEM;
-    }
-    amergesort0_@suff@(pl, pr, v, pw, len);
-    free(pw);
-
     return 0;
 }
 

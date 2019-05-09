@@ -38,7 +38,7 @@
 #define SMALL_QUICKSORT 15
 #define SMALL_MERGESORT 20
 #define SMALL_STRING 16
-#define RADIX_BITS 4
+#define RADIX_BITS 16
 #define INSERTION_SORT_LIMIT 64
 
 #define MIN(a, b) (a) < (b) ? (a) : (b)

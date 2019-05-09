@@ -43,7 +43,7 @@
 
 #define MIN(a, b) (a) < (b) ? (a) : (b)
 #define MAX(a, b) (a) > (b) ? (a) : (b)
-
+#define MIN_VALUE(t) (1 << (sizeof(t) - 1))
 
 /*
  *****************************************************************************
@@ -158,6 +158,16 @@ mergesort_@suff@(void *start, npy_intp num, void *NOT_USED)
             x[i] = x[i] - min + 1;
         }
         int value_bits = sizeof(@type@) * 8;
+        @type@ range = max - min + 1;
+        int div = value_bits >> 1;
+        while (div > 0) {
+            if ((range >> div) == 0) {
+                value_bits -= div;
+            } else {
+                range >>= div;
+            }
+            div >>= 1;
+        }
         mergesort0_@suff@(x, xx, num, order, 0, value_bits);
         for (i = 0; i < num; i++) {
             x[i] = x[i] + min - 1;

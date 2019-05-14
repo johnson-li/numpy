@@ -178,10 +178,109 @@ radixsort_@suff@(void *start, npy_intp num, void *NOT_USED)
     return 0;
 }
 
+int
+ainsertionsort_@suff@(@type@ *vv, npy_intp *x, npy_intp num) {
+    npy_intp *pl = x, *pr = x + num, *pi, *pj, *pk;
+    npy_intp vi;
+    @type@ vp;
+    for (pi = pl + 1; pi <= pr; ++pi) {
+        vi = *pi;
+        vp = vv[vi];
+        pj = pi;
+        pk = pi - 1;
+        while (pj > pl && @TYPE@_LT(vp, vv[*pk])) {
+            *pj-- = *pk--;
+        }
+        *pj = vi;
+    }
+    return 0;
+}
+
+int
+acountsort_@suff@(@type@ *vv, npy_intp *x, npy_intp *xx, npy_intp num, int bins, int *count, int shift, @type@ min) {
+    int i, j;
+    int mask = bins - 1;
+    for (i = 0; i < num; i++) {
+        int bin = ((vv[x[i]] - min) >> shift) & mask;
+        count[bin + 1]++;
+    }
+    for (j = 1; j <= bins; j++) {
+         count[j] += count[j - 1];
+    }
+    for (i = 0; i < num; i++) {
+        int bin = ((vv[x[i]] - min) >> shift) & mask;
+        int k = count[bin]++;
+        xx[k] = x[i];
+    }
+    for (i = 0; i < num; i++) {
+        x[i] = xx[i];
+    }
+    return 0;
+}
+
+int
+aradixsort0_@suff@(@type@ *vv, npy_intp *x, npy_intp *xx, npy_intp num, int value_bits, @type@ min)
+{
+    if (value_bits <= 0) {
+        return 0;
+    }
+    int i, j;
+    int radix_bits = MIN(RADIX_BITS, value_bits);
+    int shift = value_bits - radix_bits;
+    int bins = 1 << radix_bits;
+    int *count = malloc((bins + 2) * sizeof(int));
+    for (i = 0; i < bins + 2; i++) {
+        count[i] = 0;
+    }
+    acountsort_@suff@(vv, x, xx, num, bins, count + 1, shift, min);
+    value_bits = shift;
+
+    for (i = 1; i <= bins; i++) {
+        int offset = count[i - 1];
+        int len = count[i] - offset;
+        if (len > INSERTION_SORT_LIMIT) {
+            aradixsort0_@suff@(vv, x + offset, xx + offset, len, value_bits, min);
+        } else if (len > 1) {
+            ainsertionsort_@suff@(vv, x + offset, len);
+        }
+    }
+    for (i = 0; i < num; i++) {
+        x[i] = xx[i];
+    }
+    free(count);
+    return 0;
+}
+
 
 int
 aradixsort_@suff@(void *v, npy_intp *tosort, npy_intp num, void *NOT_USED)
 {
+    @type@ *vv = v;
+    npy_intp *x = tosort;
+    npy_intp *xx = malloc(num * sizeof(npy_intp));
+    if (num <= INSERTION_SORT_LIMIT) {
+        ainsertionsort_@suff@(vv, x, num);
+    } else {
+        int i;
+        @type@ max = 0, min = 0;
+        for (i = 0; i < num; i++) {
+            max = MAX(vv[x[i]], max);
+            min = MIN(vv[x[i]], min);
+        }
+        int value_bits = sizeof(@type@) * 8;
+        @type@ range = max - min + 1;
+        int div = value_bits >> 1;
+        while (div > 0) {
+            if ((range >> div) == 0) {
+                value_bits -= div;
+            } else {
+                range >>= div;
+            }
+            div >>= 1;
+        }
+        aradixsort0_@suff@(vv, x, xx, num, value_bits, min);
+        free(xx);
+    }
     return 0;
 }
 

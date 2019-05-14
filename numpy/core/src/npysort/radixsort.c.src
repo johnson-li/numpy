@@ -51,16 +51,15 @@
  *****************************************************************************
  */
 
-
  /**begin repeat
  *
  * #TYPE = BOOL, BYTE, UBYTE, SHORT, USHORT, INT, UINT, LONG, ULONG,
- *         LONGLONG, ULONGLONG, HALF#
+ *         LONGLONG, ULONGLONG, HALF, DATETIME, TIMEDELTA#
  * #suff = bool, byte, ubyte, short, ushort, int, uint, long, ulong,
- *         longlong, ulonglong, half#
+ *         longlong, ulonglong, half, datetime, timedelta#
  * #type = npy_bool, npy_byte, npy_ubyte, npy_short, npy_ushort, npy_int,
  *         npy_uint, npy_long, npy_ulong, npy_longlong, npy_ulonglong,
- *         npy_ushort#
+ *         npy_ushort, npy_datetime, npy_timedelta#
  */
 
 int
@@ -290,53 +289,16 @@ aradixsort_@suff@(void *v, npy_intp *tosort, npy_intp num, void *NOT_USED)
 /**begin repeat
  *
  * #TYPE = FLOAT, DOUBLE, LONGDOUBLE,
- *         CFLOAT, CDOUBLE, CLONGDOUBLE, DATETIME, TIMEDELTA#
+ *         CFLOAT, CDOUBLE, CLONGDOUBLE#
  * #suff = float, double, longdouble,
- *         cfloat, cdouble, clongdouble, datetime, timedelta#
+ *         cfloat, cdouble, clongdouble#
  * #type = npy_float, npy_double, npy_longdouble, npy_cfloat,
- *         npy_cdouble, npy_clongdouble, npy_datetime, npy_timedelta#
+ *         npy_cdouble, npy_clongdouble#
  */
 
 static void
 radixsort0_@suff@(@type@ *pl, @type@ *pr, @type@ *pw)
 {
-    @type@ vp, *pi, *pj, *pk, *pm;
-
-    if (pr - pl > SMALL_radixSORT) {
-        /* radix sort */
-        pm = pl + ((pr - pl) >> 1);
-        radixsort0_@suff@(pl, pm, pw);
-        radixsort0_@suff@(pm, pr, pw);
-        for (pi = pw, pj = pl; pj < pm;) {
-            *pi++ = *pj++;
-        }
-        pi = pw + (pm - pl);
-        pj = pw;
-        pk = pl;
-        while (pj < pi && pm < pr) {
-            if (@TYPE@_LT(*pm, *pj)) {
-                *pk++ = *pm++;
-            }
-            else {
-                *pk++ = *pj++;
-            }
-        }
-        while(pj < pi) {
-            *pk++ = *pj++;
-        }
-    }
-    else {
-        /* insertion sort */
-        for (pi = pl + 1; pi < pr; ++pi) {
-            vp = *pi;
-            pj = pi;
-            pk = pi - 1;
-            while (pj > pl && @TYPE@_LT(vp, *pk)) {
-                *pj-- = *pk--;
-            }
-            *pj = vp;
-        }
-    }
 }
 
 
@@ -350,45 +312,6 @@ radixsort_@suff@(void *start, npy_intp num, void *NOT_USED)
 static void
 aradixsort0_@suff@(npy_intp *pl, npy_intp *pr, @type@ *v, npy_intp *pw)
 {
-    @type@ vp;
-    npy_intp vi, *pi, *pj, *pk, *pm;
-
-    if (pr - pl > SMALL_radixSORT) {
-        /* radix sort */
-        pm = pl + ((pr - pl) >> 1);
-        aradixsort0_@suff@(pl, pm, v, pw);
-        aradixsort0_@suff@(pm, pr, v, pw);
-        for (pi = pw, pj = pl; pj < pm;) {
-            *pi++ = *pj++;
-        }
-        pi = pw + (pm - pl);
-        pj = pw;
-        pk = pl;
-        while (pj < pi && pm < pr) {
-            if (@TYPE@_LT(v[*pm], v[*pj])) {
-                *pk++ = *pm++;
-            }
-            else {
-                *pk++ = *pj++;
-            }
-        }
-        while(pj < pi) {
-            *pk++ = *pj++;
-        }
-    }
-    else {
-        /* insertion sort */
-        for (pi = pl + 1; pi < pr; ++pi) {
-            vi = *pi;
-            vp = v[vi];
-            pj = pi;
-            pk = pi - 1;
-            while (pj > pl && @TYPE@_LT(vp, v[*pk])) {
-                *pj-- = *pk--;
-            }
-            *pj = vi;
-        }
-    }
 }
 
 
@@ -399,7 +322,6 @@ aradixsort_@suff@(void *v, npy_intp *tosort, npy_intp num, void *NOT_USED)
 }
 
 /**end repeat**/
-
 
 /*
  *****************************************************************************
@@ -418,45 +340,6 @@ aradixsort_@suff@(void *v, npy_intp *tosort, npy_intp num, void *NOT_USED)
 static void
 radixsort0_@suff@(@type@ *pl, @type@ *pr, @type@ *pw, @type@ *vp, size_t len)
 {
-    @type@ *pi, *pj, *pk, *pm;
-
-    if ((size_t)(pr - pl) > SMALL_radixSORT*len) {
-        /* radix sort */
-        pm = pl + (((pr - pl)/len) >> 1)*len;
-        radixsort0_@suff@(pl, pm, pw, vp, len);
-        radixsort0_@suff@(pm, pr, pw, vp, len);
-        @TYPE@_COPY(pw, pl, pm - pl);
-        pi = pw + (pm - pl);
-        pj = pw;
-        pk = pl;
-        while (pj < pi && pm < pr) {
-            if (@TYPE@_LT(pm, pj, len)) {
-                @TYPE@_COPY(pk, pm, len);
-                pm += len;
-                pk += len;
-            }
-            else {
-                @TYPE@_COPY(pk, pj, len);
-                pj += len;
-                pk += len;
-            }
-        }
-        @TYPE@_COPY(pk, pj, pi - pj);
-    }
-    else {
-        /* insertion sort */
-        for (pi = pl + len; pi < pr; pi += len) {
-            @TYPE@_COPY(vp, pi, len);
-            pj = pi;
-            pk = pi - len;
-            while (pj > pl && @TYPE@_LT(vp, pk, len)) {
-                @TYPE@_COPY(pj, pk, len);
-                pj -= len;
-                pk -= len;
-            }
-            @TYPE@_COPY(pj, vp, len);
-        }
-    }
 }
 
 
@@ -470,45 +353,6 @@ radixsort_@suff@(void *start, npy_intp num, void *varr)
 static void
 aradixsort0_@suff@(npy_intp *pl, npy_intp *pr, @type@ *v, npy_intp *pw, size_t len)
 {
-    @type@ *vp;
-    npy_intp vi, *pi, *pj, *pk, *pm;
-
-    if (pr - pl > SMALL_radixSORT) {
-        /* radix sort */
-        pm = pl + ((pr - pl) >> 1);
-        aradixsort0_@suff@(pl, pm, v, pw, len);
-        aradixsort0_@suff@(pm, pr, v, pw, len);
-        for (pi = pw, pj = pl; pj < pm;) {
-            *pi++ = *pj++;
-        }
-        pi = pw + (pm - pl);
-        pj = pw;
-        pk = pl;
-        while (pj < pi && pm < pr) {
-            if (@TYPE@_LT(v + (*pm)*len, v + (*pj)*len, len)) {
-                *pk++ = *pm++;
-            }
-            else {
-                *pk++ = *pj++;
-            }
-        }
-        while (pj < pi) {
-            *pk++ = *pj++;
-        }
-    }
-    else {
-        /* insertion sort */
-        for (pi = pl + 1; pi < pr; ++pi) {
-            vi = *pi;
-            vp = v + vi*len;
-            pj = pi;
-            pk = pi - 1;
-            while (pj > pl && @TYPE@_LT(vp, v + (*pk)*len, len)) {
-                *pj-- = *pk--;
-            }
-            *pj = vi;
-        }
-    }
 }
 
 

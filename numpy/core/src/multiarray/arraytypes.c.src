@@ -4463,12 +4463,14 @@ static PyArray_ArrFuncs _Py@NAME@_ArrFuncs = {
     {
         quicksort_@suff@,
         heapsort_@suff@,
-        mergesort_@suff@
+        mergesort_@suff@,
+        radixsort_@suff@
     },
     {
         aquicksort_@suff@,
         aheapsort_@suff@,
-        amergesort_@suff@
+        amergesort_@suff@,
+        aradixsort_@suff@
     },
 #else
     {

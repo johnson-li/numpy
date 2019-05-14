@@ -425,6 +425,9 @@ PyArray_SortkindConverter(PyObject *obj, NPY_SORTKIND *sortkind)
         /* mergesort is the only stable sorting method in numpy */
         *sortkind = NPY_MERGESORT;
     }
+    else if (str[0] == 'r' || str[0] == 'R') {
+        *sortkind = NPY_RADIXSORT;
+    }
     else {
         PyErr_Format(PyExc_ValueError,
                      "%s is an unrecognized kind of sort",

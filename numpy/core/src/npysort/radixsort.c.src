@@ -1,0 +1,585 @@
+/* -*- c -*- */
+
+/*
+ * The purpose of this module is to add faster sort functions
+ * that are type-specific.  This is done by altering the
+ * function table for the builtin descriptors.
+ *
+ * These sorting functions are copied almost directly from numarray
+ * with a few modifications (complex comparisons compare the imaginary
+ * part if the real parts are equal, for example), and the names
+ * are changed.
+ *
+ * The original sorting code is due to Charles R. Harris who wrote
+ * it for numarray.
+ */
+
+/*
+ * Quick sort is usually the fastest, but the worst case scenario can
+ * be slower than the radix and heap sorts.  The radix sort requires
+ * extra memory and so for large arrays may not be useful.
+ *
+ * The radix sort is *stable*, meaning that equal components
+ * are unmoved from their entry versions, so it can be used to
+ * implement lexigraphic sorting on multiple keys.
+ *
+ * The heap sort is included for completeness.
+ */
+
+#define NPY_NO_DEPRECATED_API NPY_API_VERSION
+
+#include "npy_sort.h"
+#include "npysort_common.h"
+#include <stdlib.h>
+#include <stdio.h>
+
+#define NOT_USED NPY_UNUSED(unused)
+#define PYA_QS_STACK 100
+#define SMALL_QUICKSORT 15
+#define SMALL_radixSORT 20
+#define SMALL_STRING 16
+#define RADIX_BITS 16
+#define INSERTION_SORT_LIMIT 64
+
+#define MIN(a, b) (a) < (b) ? (a) : (b)
+#define MAX(a, b) (a) > (b) ? (a) : (b)
+#define MIN_VALUE(t) (1 << (sizeof(t) - 1))
+
+/*
+ *****************************************************************************
+ **                            DIGITAL SORTS                                **
+ *****************************************************************************
+ */
+
+
+ /**begin repeat
+ *
+ * #TYPE = BOOL, BYTE, UBYTE, SHORT, USHORT, INT, UINT, LONG, ULONG,
+ *         LONGLONG, ULONGLONG, HALF#
+ * #suff = bool, byte, ubyte, short, ushort, int, uint, long, ulong,
+ *         longlong, ulonglong, half#
+ * #type = npy_bool, npy_byte, npy_ubyte, npy_short, npy_ushort, npy_int,
+ *         npy_uint, npy_long, npy_ulong, npy_longlong, npy_ulonglong,
+ *         npy_ushort#
+ */
+
+int
+insertionsort_@suff@(@type@ *x, @type@ *xx, npy_intp num, npy_intp *order, int order_offset) {
+    order[0] = order_offset;
+    int i, j;
+    for (i = 1; i < num; i++) {
+        for (j = i; j > 0 && x[i] < x[order[j - 1] - order_offset]; j--) {
+           order[j] = order[j - 1];
+        }
+        order[j] = i + order_offset;
+    }
+    for (i = 0; i < num; i++) {
+        xx[i] = x[order[i] - order_offset];
+    }
+    for (i = 0; i < num; i++) {
+        x[i] = xx[i];
+    }
+    return 0;
+}
+
+int
+countsort_@suff@(@type@ *x, @type@ *xx, npy_intp num, npy_intp bins, npy_intp *order, int *count, int shift, int order_offset) {
+    int i, j;
+    int mask = bins - 1;
+    for (i = 0; i < num; i++) {
+        int bin = (x[i] >> shift) & mask;
+        count[bin + 1]++;
+    }
+    for (j = 1; j <= bins; j++) {
+         count[j] += count[j - 1];
+    }
+    for (i = 0; i < num; i++) {
+        int bin = (x[i] >> shift) & mask;
+        int k = count[bin]++;
+        order[i] = k + order_offset;
+        xx[k] = x[i];
+    }
+    return 0;
+}
+
+int
+radixsort0_@suff@(@type@ *x, @type@ *xx, npy_intp num, npy_intp *order, int order_offset, int value_bits)
+{
+    if (value_bits <= 0) {
+        return 0;
+    }
+    int i, j;
+    int radix_bits = MIN(RADIX_BITS, value_bits);
+    int shift = value_bits - radix_bits;
+    int bins = 1 << radix_bits;
+    int *count = malloc((bins + 2) * sizeof(int));
+    for (i = 0; i < bins + 2; i++) {
+        count[i] = 0;
+    }
+    countsort_@suff@(x, xx, num, bins, order, count + 1, shift, order_offset);
+    value_bits = shift;
+
+    for (i = 0; i < num; i++) {
+        x[i] = xx[i];
+    }
+
+    for (i = 1; i <= bins; i++) {
+        int offset = count[i - 1];
+        int len = count[i] - offset;
+        if (len > INSERTION_SORT_LIMIT) {
+            radixsort0_@suff@(x + offset, xx + offset, len, order + offset, order_offset + offset, value_bits);
+        } else if (len > 1) {
+            insertionsort_@suff@(x + offset, xx + offset, len, order + offset, order_offset + offset);
+        }
+    }
+    for (i = 0; i < num; i++) {
+        x[i] = xx[i];
+    }
+    free(count);
+    return 0;
+}
+
+int
+radixsort_@suff@(void *start, npy_intp num, void *NOT_USED)
+{
+    @type@ *x = start;
+    @type@ *xx = malloc(num * sizeof(@type@));
+    npy_intp *order = malloc(num * sizeof(npy_intp));
+    if (num <= INSERTION_SORT_LIMIT) {
+        insertionsort_@suff@(x, xx, num, order, 0);
+    } else {
+        int i;
+        @type@ max = 0, min = 0;
+        for (i = 0; i < num; i++) {
+            max = MAX(x[i], max);
+            min = MIN(x[i], min);
+        }
+        for (i = 0; i < num; i++) {
+            x[i] = x[i] - min + 1;
+        }
+        int value_bits = sizeof(@type@) * 8;
+        @type@ range = max - min + 1;
+        int div = value_bits >> 1;
+        while (div > 0) {
+            if ((range >> div) == 0) {
+                value_bits -= div;
+            } else {
+                range >>= div;
+            }
+            div >>= 1;
+        }
+        radixsort0_@suff@(x, xx, num, order, 0, value_bits);
+        for (i = 0; i < num; i++) {
+            x[i] = x[i] + min - 1;
+        }
+        free(xx);
+        free(order);
+    }
+    return 0;
+}
+
+
+int
+aradixsort_@suff@(void *v, npy_intp *tosort, npy_intp num, void *NOT_USED)
+{
+    return 0;
+}
+
+/**end repeat**/
+
+/*
+ *****************************************************************************
+ **                            NUMERIC SORTS                                **
+ *****************************************************************************
+ */
+
+
+/**begin repeat
+ *
+ * #TYPE = FLOAT, DOUBLE, LONGDOUBLE,
+ *         CFLOAT, CDOUBLE, CLONGDOUBLE, DATETIME, TIMEDELTA#
+ * #suff = float, double, longdouble,
+ *         cfloat, cdouble, clongdouble, datetime, timedelta#
+ * #type = npy_float, npy_double, npy_longdouble, npy_cfloat,
+ *         npy_cdouble, npy_clongdouble, npy_datetime, npy_timedelta#
+ */
+
+static void
+radixsort0_@suff@(@type@ *pl, @type@ *pr, @type@ *pw)
+{
+    @type@ vp, *pi, *pj, *pk, *pm;
+
+    if (pr - pl > SMALL_radixSORT) {
+        /* radix sort */
+        pm = pl + ((pr - pl) >> 1);
+        radixsort0_@suff@(pl, pm, pw);
+        radixsort0_@suff@(pm, pr, pw);
+        for (pi = pw, pj = pl; pj < pm;) {
+            *pi++ = *pj++;
+        }
+        pi = pw + (pm - pl);
+        pj = pw;
+        pk = pl;
+        while (pj < pi && pm < pr) {
+            if (@TYPE@_LT(*pm, *pj)) {
+                *pk++ = *pm++;
+            }
+            else {
+                *pk++ = *pj++;
+            }
+        }
+        while(pj < pi) {
+            *pk++ = *pj++;
+        }
+    }
+    else {
+        /* insertion sort */
+        for (pi = pl + 1; pi < pr; ++pi) {
+            vp = *pi;
+            pj = pi;
+            pk = pi - 1;
+            while (pj > pl && @TYPE@_LT(vp, *pk)) {
+                *pj-- = *pk--;
+            }
+            *pj = vp;
+        }
+    }
+}
+
+
+int
+radixsort_@suff@(void *start, npy_intp num, void *NOT_USED)
+{
+    return 0;
+}
+
+
+static void
+aradixsort0_@suff@(npy_intp *pl, npy_intp *pr, @type@ *v, npy_intp *pw)
+{
+    @type@ vp;
+    npy_intp vi, *pi, *pj, *pk, *pm;
+
+    if (pr - pl > SMALL_radixSORT) {
+        /* radix sort */
+        pm = pl + ((pr - pl) >> 1);
+        aradixsort0_@suff@(pl, pm, v, pw);
+        aradixsort0_@suff@(pm, pr, v, pw);
+        for (pi = pw, pj = pl; pj < pm;) {
+            *pi++ = *pj++;
+        }
+        pi = pw + (pm - pl);
+        pj = pw;
+        pk = pl;
+        while (pj < pi && pm < pr) {
+            if (@TYPE@_LT(v[*pm], v[*pj])) {
+                *pk++ = *pm++;
+            }
+            else {
+                *pk++ = *pj++;
+            }
+        }
+        while(pj < pi) {
+            *pk++ = *pj++;
+        }
+    }
+    else {
+        /* insertion sort */
+        for (pi = pl + 1; pi < pr; ++pi) {
+            vi = *pi;
+            vp = v[vi];
+            pj = pi;
+            pk = pi - 1;
+            while (pj > pl && @TYPE@_LT(vp, v[*pk])) {
+                *pj-- = *pk--;
+            }
+            *pj = vi;
+        }
+    }
+}
+
+
+int
+aradixsort_@suff@(void *v, npy_intp *tosort, npy_intp num, void *NOT_USED)
+{
+    return 0;
+}
+
+/**end repeat**/
+
+
+/*
+ *****************************************************************************
+ **                             STRING SORTS                                **
+ *****************************************************************************
+ */
+
+
+/**begin repeat
+ *
+ * #TYPE = STRING, UNICODE#
+ * #suff = string, unicode#
+ * #type = npy_char, npy_ucs4#
+ */
+
+static void
+radixsort0_@suff@(@type@ *pl, @type@ *pr, @type@ *pw, @type@ *vp, size_t len)
+{
+    @type@ *pi, *pj, *pk, *pm;
+
+    if ((size_t)(pr - pl) > SMALL_radixSORT*len) {
+        /* radix sort */
+        pm = pl + (((pr - pl)/len) >> 1)*len;
+        radixsort0_@suff@(pl, pm, pw, vp, len);
+        radixsort0_@suff@(pm, pr, pw, vp, len);
+        @TYPE@_COPY(pw, pl, pm - pl);
+        pi = pw + (pm - pl);
+        pj = pw;
+        pk = pl;
+        while (pj < pi && pm < pr) {
+            if (@TYPE@_LT(pm, pj, len)) {
+                @TYPE@_COPY(pk, pm, len);
+                pm += len;
+                pk += len;
+            }
+            else {
+                @TYPE@_COPY(pk, pj, len);
+                pj += len;
+                pk += len;
+            }
+        }
+        @TYPE@_COPY(pk, pj, pi - pj);
+    }
+    else {
+        /* insertion sort */
+        for (pi = pl + len; pi < pr; pi += len) {
+            @TYPE@_COPY(vp, pi, len);
+            pj = pi;
+            pk = pi - len;
+            while (pj > pl && @TYPE@_LT(vp, pk, len)) {
+                @TYPE@_COPY(pj, pk, len);
+                pj -= len;
+                pk -= len;
+            }
+            @TYPE@_COPY(pj, vp, len);
+        }
+    }
+}
+
+
+int
+radixsort_@suff@(void *start, npy_intp num, void *varr)
+{
+    return 0;
+}
+
+
+static void
+aradixsort0_@suff@(npy_intp *pl, npy_intp *pr, @type@ *v, npy_intp *pw, size_t len)
+{
+    @type@ *vp;
+    npy_intp vi, *pi, *pj, *pk, *pm;
+
+    if (pr - pl > SMALL_radixSORT) {
+        /* radix sort */
+        pm = pl + ((pr - pl) >> 1);
+        aradixsort0_@suff@(pl, pm, v, pw, len);
+        aradixsort0_@suff@(pm, pr, v, pw, len);
+        for (pi = pw, pj = pl; pj < pm;) {
+            *pi++ = *pj++;
+        }
+        pi = pw + (pm - pl);
+        pj = pw;
+        pk = pl;
+        while (pj < pi && pm < pr) {
+            if (@TYPE@_LT(v + (*pm)*len, v + (*pj)*len, len)) {
+                *pk++ = *pm++;
+            }
+            else {
+                *pk++ = *pj++;
+            }
+        }
+        while (pj < pi) {
+            *pk++ = *pj++;
+        }
+    }
+    else {
+        /* insertion sort */
+        for (pi = pl + 1; pi < pr; ++pi) {
+            vi = *pi;
+            vp = v + vi*len;
+            pj = pi;
+            pk = pi - 1;
+            while (pj > pl && @TYPE@_LT(vp, v + (*pk)*len, len)) {
+                *pj-- = *pk--;
+            }
+            *pj = vi;
+        }
+    }
+}
+
+
+int
+aradixsort_@suff@(void *v, npy_intp *tosort, npy_intp num, void *varr)
+{
+    return 0;
+}
+
+/**end repeat**/
+
+
+/*
+ *****************************************************************************
+ **                             GENERIC SORT                                **
+ *****************************************************************************
+ */
+
+
+static void
+npy_radixsort0(char *pl, char *pr, char *pw, char *vp, npy_intp elsize,
+               PyArray_CompareFunc *cmp, PyArrayObject *arr)
+{
+    char *pi, *pj, *pk, *pm;
+
+    if (pr - pl > SMALL_radixSORT*elsize) {
+        /* radix sort */
+        pm = pl + (((pr - pl)/elsize) >> 1)*elsize;
+        npy_radixsort0(pl, pm, pw, vp, elsize, cmp, arr);
+        npy_radixsort0(pm, pr, pw, vp, elsize, cmp, arr);
+        GENERIC_COPY(pw, pl, pm - pl);
+        pi = pw + (pm - pl);
+        pj = pw;
+        pk = pl;
+        while (pj < pi && pm < pr) {
+            if (cmp(pm, pj, arr) < 0) {
+                GENERIC_COPY(pk, pm, elsize);
+                pm += elsize;
+                pk += elsize;
+            }
+            else {
+                GENERIC_COPY(pk, pj, elsize);
+                pj += elsize;
+                pk += elsize;
+            }
+        }
+        GENERIC_COPY(pk, pj, pi - pj);
+    }
+    else {
+        /* insertion sort */
+        for (pi = pl + elsize; pi < pr; pi += elsize) {
+            GENERIC_COPY(vp, pi, elsize);
+            pj = pi;
+            pk = pi - elsize;
+            while (pj > pl && cmp(vp, pk, arr) < 0) {
+                GENERIC_COPY(pj, pk, elsize);
+                pj -= elsize;
+                pk -= elsize;
+            }
+            GENERIC_COPY(pj, vp, elsize);
+        }
+    }
+}
+
+
+int
+npy_radixsort(void *start, npy_intp num, void *varr)
+{
+    PyArrayObject *arr = varr;
+    npy_intp elsize = PyArray_ITEMSIZE(arr);
+    PyArray_CompareFunc *cmp = PyArray_DESCR(arr)->f->compare;
+    char *pl = start;
+    char *pr = pl + num*elsize;
+    char *pw;
+    char *vp;
+    int err = -NPY_ENOMEM;
+
+    /* Items that have zero size don't make sense to sort */
+    if (elsize == 0) {
+        return 0;
+    }
+
+    pw = malloc((num >> 1) *elsize);
+    vp = malloc(elsize);
+
+    if (pw != NULL && vp != NULL) {
+        npy_radixsort0(pl, pr, pw, vp, elsize, cmp, arr);
+        err = 0;
+    }
+
+    free(vp);
+    free(pw);
+
+    return err;
+}
+
+
+static void
+npy_aradixsort0(npy_intp *pl, npy_intp *pr, char *v, npy_intp *pw,
+                npy_intp elsize, PyArray_CompareFunc *cmp, PyArrayObject *arr)
+{
+    char *vp;
+    npy_intp vi, *pi, *pj, *pk, *pm;
+
+    if (pr - pl > SMALL_radixSORT) {
+        /* radix sort */
+        pm = pl + ((pr - pl) >> 1);
+        npy_aradixsort0(pl, pm, v, pw, elsize, cmp, arr);
+        npy_aradixsort0(pm, pr, v, pw, elsize, cmp, arr);
+        for (pi = pw, pj = pl; pj < pm;) {
+            *pi++ = *pj++;
+        }
+        pi = pw + (pm - pl);
+        pj = pw;
+        pk = pl;
+        while (pj < pi && pm < pr) {
+            if (cmp(v + (*pm)*elsize, v + (*pj)*elsize, arr) < 0) {
+                *pk++ = *pm++;
+            }
+            else {
+                *pk++ = *pj++;
+            }
+        }
+        while (pj < pi) {
+            *pk++ = *pj++;
+        }
+    }
+    else {
+        /* insertion sort */
+        for (pi = pl + 1; pi < pr; ++pi) {
+            vi = *pi;
+            vp = v + vi*elsize;
+            pj = pi;
+            pk = pi - 1;
+            while (pj > pl && cmp(vp, v + (*pk)*elsize, arr) < 0) {
+                *pj-- = *pk--;
+            }
+            *pj = vi;
+        }
+    }
+}
+
+
+int
+npy_aradixsort(void *v, npy_intp *tosort, npy_intp num, void *varr)
+{
+    PyArrayObject *arr = varr;
+    npy_intp elsize = PyArray_ITEMSIZE(arr);
+    PyArray_CompareFunc *cmp = PyArray_DESCR(arr)->f->compare;
+    npy_intp *pl, *pr, *pw;
+
+    /* Items that have zero size don't make sense to sort */
+    if (elsize == 0) {
+        return 0;
+    }
+
+    pl = tosort;
+    pr = pl + num;
+    pw = malloc((num >> 1) * sizeof(npy_intp));
+    if (pw == NULL) {
+        return -NPY_ENOMEM;
+    }
+    npy_aradixsort0(pl, pr, v, pw, elsize, cmp, arr);
+    free(pw);
+
+    return 0;
+}
